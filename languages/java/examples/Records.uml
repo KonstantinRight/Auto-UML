@@ -1,0 +1,33 @@
+classDiagram
+    class Empty {
+    }
+    class Point {
+        -x: int
+        -y: int
+        +x() int
+        +y() int
+    }
+    class Collision {
+        -Collision: int
+        +Collision()
+        +Collision() int
+    }
+    class Values~T~ {
+        -value: T
+        -items: java.util.List~T~
+        -numbers: int[]
+        +Values(value: T, items: java.util.List~T~, numbers: int[])
+        +value() T
+        +numbers(index: int) int
+        +consume(argument: String) void
+        +items() java.util.List~T~
+        +numbers() int[]
+    }
+    class Holder {
+        -ordinary: int
+        +method(argument: int) void
+    }
+    class Nested {
+        -name: String
+        +name() String
+    }

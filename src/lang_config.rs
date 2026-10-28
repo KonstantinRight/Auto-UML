@@ -14,6 +14,9 @@ static LANG_DIR: Dir<'_> = include_dir!("$STAGED_LANGS_DIR");
 pub struct LangConfig {
     pub file_extensions: Option<Vec<String>>,
     pub class_patterns: Option<Vec<String>>,
+    /// Opt-in fields from direct declaration -> container -> member children.
+    /// Missing/empty rules leave ordinary field extraction unchanged.
+    pub class_field_rules: Option<Vec<ClassFieldRule>>,
     pub function_patterns: Option<Vec<String>>,
     pub variable_patterns: Option<Vec<String>>,
     pub identifier_patterns: Option<Vec<String>>,
@@ -68,6 +71,45 @@ pub struct LangConfig {
     /// with an actual void return, but meaningless here — writers suppress it instead of
     /// printing `+id: void` / `add() void`. See `Variable::render` / `Function::render`.
     pub loosely_typed: Option<bool>,
+}
+
+/// Extract fields only from matching direct children of a matching class owner.
+#[derive(Clone, Deserialize, Debug)]
+pub struct ClassFieldRule {
+    pub owner_patterns: Vec<String>,
+    pub container_patterns: Vec<String>,
+    pub member_patterns: Vec<String>,
+    /// Defaults to public fields, independently of ordinary visibility extraction.
+    #[serde(default)]
+    pub private: bool,
+    /// Omitted policy generates no getters.
+    pub getter: Option<GetterConfig>,
+}
+
+/// Only public, same-name accessors are supported by the current function model.
+/// Unsupported policy strings fail configuration deserialization.
+#[derive(Clone, Deserialize, Debug, Default)]
+pub struct GetterConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub visibility: GetterVisibility,
+    #[serde(default)]
+    pub naming: GetterNaming,
+}
+
+#[derive(Clone, Deserialize, Debug, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GetterVisibility {
+    #[default]
+    Public,
+}
+
+#[derive(Clone, Deserialize, Debug, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GetterNaming {
+    #[default]
+    SameAsField,
 }
 
 impl LangConfig {
@@ -130,5 +172,39 @@ impl LangConfig {
             "dart",
             "kotlin",
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn omitted_getter_policy_is_absent() {
+        let rule: ClassFieldRule =
+            serde_yml::from_str("owner_patterns: []\ncontainer_patterns: []\nmember_patterns: []")
+                .unwrap();
+        assert!(rule.getter.is_none());
+    }
+
+    #[test]
+    fn empty_getter_policy_is_disabled() {
+        let getter: GetterConfig = serde_yml::from_str("{}").unwrap();
+        assert!(!getter.enabled);
+    }
+
+    #[test]
+    fn enabled_getter_policy_uses_documented_defaults() {
+        let getter: GetterConfig = serde_yml::from_str("enabled: true").unwrap();
+        assert!(getter.enabled);
+        assert!(matches!(getter.visibility, GetterVisibility::Public));
+        assert!(matches!(getter.naming, GetterNaming::SameAsField));
+    }
+
+    #[test]
+    fn unsupported_getter_policies_are_rejected() {
+        for yaml in ["visibility: private", "naming: get_prefix"] {
+            assert!(serde_yml::from_str::<GetterConfig>(yaml).is_err(), "{yaml}");
+        }
     }
 }

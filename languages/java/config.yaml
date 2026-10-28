@@ -4,6 +4,16 @@ class_patterns:
   - class_declaration
   - class_specifier
   - interface_declaration
+  - record_declaration
+class_field_rules:
+  - owner_patterns: [record_declaration]
+    container_patterns: [formal_parameters]
+    member_patterns: [formal_parameter]
+    private: true
+    getter:
+      enabled: true
+      visibility: public
+      naming: same_as_field
 function_patterns:
   - method_declaration
   - function_definition

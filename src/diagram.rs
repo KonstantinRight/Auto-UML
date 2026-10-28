@@ -1,4 +1,4 @@
-use crate::lang_config::LangConfig;
+use crate::lang_config::{GetterNaming, GetterVisibility, LangConfig};
 use tree_sitter::Node;
 
 const EMPTY_RETURN_TYPE: &str = "void";
@@ -211,10 +211,17 @@ impl<'a> Diagram<'a> {
     ) {
         let mut next_class_index = class_index;
         let mut active_namespace = current_namespace.to_string();
+        let mut getter_candidates = Vec::new();
 
         let _ = self.try_import(node, source)
             || self.try_namespace(node, source, &mut active_namespace)
-            || self.try_class(node, source, &active_namespace, &mut next_class_index)
+            || self.try_class(
+                node,
+                source,
+                &active_namespace,
+                &mut next_class_index,
+                &mut getter_candidates,
+            )
             || self.try_function(node, source, next_class_index)
             || self.try_variable(node, source, next_class_index);
 
@@ -223,6 +230,9 @@ impl<'a> Diagram<'a> {
 
         for child in node.children(&mut cursor) {
             self.navigate_node(child, source, next_class_index, &active_namespace);
+        }
+        if let Some(idx) = next_class_index {
+            self.add_missing_getters(idx, getter_candidates);
         }
     }
 
@@ -262,6 +272,7 @@ impl<'a> Diagram<'a> {
         source: &[u8],
         active_namespace: &str,
         next_class_index: &mut Option<usize>,
+        getter_candidates: &mut Vec<Function>,
     ) -> bool {
         let lang = self.lang;
         if !any_match(&lang.class_patterns, node.kind()) {
@@ -287,8 +298,79 @@ impl<'a> Diagram<'a> {
                 self.classes.push(new_class);
                 *next_class_index = Some(self.classes.len() - 1);
             }
+            getter_candidates.extend(self.collect_class_fields(
+                node,
+                source,
+                next_class_index.unwrap(),
+            ));
         }
         true
+    }
+
+    /// Match only the owner's direct containers and their direct members.
+    fn collect_class_fields(&mut self, node: Node, source: &[u8], idx: usize) -> Vec<Function> {
+        let mut getters = Vec::new();
+        let Some(rules) = &self.lang.class_field_rules else {
+            return getters;
+        };
+        let mut seen = std::collections::HashSet::new();
+        for rule in rules {
+            if !rule.owner_patterns.iter().any(|p| p == node.kind()) {
+                continue;
+            }
+            let mut cursor = node.walk();
+            for container in node.children(&mut cursor) {
+                if !rule
+                    .container_patterns
+                    .iter()
+                    .any(|p| p == container.kind())
+                {
+                    continue;
+                }
+                let mut members = container.walk();
+                for member in container.children(&mut members) {
+                    if !rule.member_patterns.iter().any(|p| p == member.kind()) {
+                        continue;
+                    }
+                    let name = self.extract_identifier(member, source);
+                    if name.is_empty() || !seen.insert(name.clone()) {
+                        continue;
+                    }
+                    let types = self.extract_type(member, source);
+                    let mut field = Variable::new(types[0].clone());
+                    field.inner_types = (types.len() > 1).then(|| types[1..].to_vec());
+                    field.name = Some(name.clone());
+                    field.private = rule.private;
+                    if rule
+                        .getter
+                        .as_ref()
+                        .is_some_and(|g| match (&g.visibility, &g.naming) {
+                            (GetterVisibility::Public, GetterNaming::SameAsField) => g.enabled,
+                        })
+                    {
+                        let mut return_type = Variable::new(field.var_type.clone());
+                        return_type.inner_types = field.inner_types.clone();
+                        getters.push(Function::new(name, return_type));
+                    }
+                    self.classes[idx].add_variable(field);
+                }
+            }
+        }
+        getters
+    }
+
+    /// Run after traversal so explicit accessors take precedence over generated ones.
+    fn add_missing_getters(&mut self, idx: usize, candidates: Vec<Function>) {
+        let class = &mut self.classes[idx];
+        for getter in candidates {
+            if !class
+                .functions
+                .iter()
+                .any(|f| !f.is_constructor && f.name == getter.name && f.arguments.is_empty())
+            {
+                class.add_function(getter);
+            }
+        }
     }
 
     /// Gated on `function_patterns`.

@@ -230,6 +230,123 @@ lang_tests!(objc, "objc");
 lang_tests!(dart, "dart");
 lang_tests!(kotlin, "kotlin");
 
+mod java_records {
+    use super::*;
+
+    #[test]
+    fn records() {
+        run_test(&load_single_lang_config("java"), "records", |diagram, _| {
+            let point = diagram.classes.iter().find(|c| c.name == "Point").unwrap();
+            let getter = point.functions.iter().find(|f| f.name == "x").unwrap();
+            assert!(getter.return_type.name.is_none());
+            assert!(!getter.is_constructor);
+        });
+    }
+
+    #[test]
+    fn optional_class_field_rules() {
+        let enabled = LangConfig::load("java");
+        let mut disabled = enabled.clone();
+        disabled.class_field_rules.as_mut().unwrap()[0]
+            .getter
+            .as_mut()
+            .unwrap()
+            .enabled = false;
+        let mut absent = enabled.clone();
+        absent.class_field_rules = None;
+
+        for (name, config, expected_fields, expected_getters) in [
+            ("no rules", absent, 0, 0),
+            ("getter disabled", disabled, 1, 0),
+            ("getter enabled", enabled, 1, 1),
+        ] {
+            let mut diagram = Diagram::new(&config);
+            diagram.build(b"record Item(int id) {}", &mut setup_parser("java"));
+            let item = diagram.classes.iter().find(|c| c.name == "Item").unwrap();
+            assert_eq!(item.variables.len(), expected_fields, "{name}");
+            assert_eq!(item.functions.len(), expected_getters, "{name}");
+        }
+    }
+
+    #[test]
+    fn class_field_rules_match_only_direct_children() {
+        let mut config = LangConfig::load("java");
+        config.class_field_rules.as_mut().unwrap()[0].owner_patterns =
+            vec!["class_declaration".into()];
+        let mut diagram = Diagram::new(&config);
+        diagram.build(
+            b"class Ordinary { void method(int argument) {} }",
+            &mut setup_parser("java"),
+        );
+        assert!(diagram.classes[0].variables.is_empty());
+    }
+
+    #[test]
+    fn overlapping_rules_do_not_duplicate_components() {
+        let mut config = LangConfig::load("java");
+        let rule = config.class_field_rules.as_ref().unwrap()[0].clone();
+        config.class_field_rules.as_mut().unwrap().push(rule);
+        let mut diagram = Diagram::new(&config);
+        diagram.build(b"record Item(int id) {}", &mut setup_parser("java"));
+        let item = &diagram.classes[0];
+        assert_eq!(item.variables.len(), 1);
+        assert_eq!(item.functions.len(), 1);
+    }
+
+    #[test]
+    fn cross_file_types_and_relationships() {
+        let config = LangConfig::load("java");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("languages/java/record_stitch");
+        let mut stitcher = Stitcher::new(root, &config, setup_parser("java"), false);
+        let mut directory = stitcher.build();
+        directory.merge_all();
+        directory.resolve_types(&stitcher.type_map);
+        let diagram = &directory.merged_diagram;
+        let contact = diagram
+            .classes
+            .iter()
+            .find(|c| c.name == "Contact")
+            .unwrap();
+        let field = |name| {
+            contact
+                .variables
+                .iter()
+                .find(|v| v.name.as_deref() == Some(name))
+                .unwrap()
+        };
+        let getter = |name| {
+            contact
+                .functions
+                .iter()
+                .find(|f| f.name == name && !f.is_constructor && f.arguments.is_empty())
+                .unwrap()
+        };
+        assert_eq!(field("address").var_type, "models_Address");
+        assert_eq!(
+            getter("address").return_type.var_type,
+            field("address").var_type
+        );
+        assert_eq!(
+            field("alternatives").inner_types.as_deref().unwrap(),
+            ["models_Address"]
+        );
+        assert_eq!(
+            getter("alternatives").return_type.inner_types,
+            field("alternatives").inner_types
+        );
+        let mermaid = generate(diagram);
+        assert!(mermaid.contains("Contact --> models_Address"));
+        assert!(mermaid.contains("Contact ..> models_Address"));
+        let dot = auto_uml::graphviz::generate(diagram);
+        assert!(dot.contains("\"Contact\" -> \"models_Address\" [arrowhead=\"vee\"];"));
+        assert!(
+            dot.contains(
+                "\"Contact\" -> \"models_Address\" [arrowhead=\"vee\", style=\"dashed\"];"
+            )
+        );
+    }
+}
+
 #[test]
 fn test_stitcher_integration() {
     let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

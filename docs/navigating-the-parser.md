@@ -43,7 +43,11 @@ For every function node, the parser:
 
 Variable nodes are processed for their name and type. If the parser is currently within a class context, these are added as member variables (fields) to the UML class.
 
-### Visibility Modifiers
+### Class header fields and getters
+
+class_field_rules extracts fields from configured direct children of class declarations. Rules can also generate public, same-name getters after explicit methods are collected, avoiding duplicate accessors. Java uses this for record components. See languages/java/config.yaml for an example.
+
+### Visibility rendering
 
 Visibility is determined from YAML config options and rendered in Mermaid notation (`+` for public, `-` for private).
 

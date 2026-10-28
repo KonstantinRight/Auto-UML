@@ -5,3 +5,4 @@ files:
   impl_block: Calculator.java
   complex_types: ComplexData.java
   generics: Box.java
+  records: Records.java
