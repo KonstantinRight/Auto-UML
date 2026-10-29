@@ -1,0 +1,4 @@
+interface:
+  display_name: "UML Plan"
+  short_description: "Plan implementations with before-and-after UML"
+  default_prompt: "Use $uml-plan to propose an implementation with current and proposed UML class diagrams."
