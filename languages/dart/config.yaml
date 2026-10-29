@@ -102,3 +102,7 @@ builtin_type_names:
   - ConcurrentModificationError
   - OutOfMemoryError
   - StackOverflowError
+
+callable_scope_patterns:
+  - function_expression
+  - function_body

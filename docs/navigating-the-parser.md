@@ -39,13 +39,24 @@ For every function node, the parser:
 2. Extracts the **Return Type** by searching for type-specific nodes.
 3. Dives into the **Parameters** container to extract the name and type of every argument.
 
+Free functions retain their namespace in `SourceFile` entries; only nonempty files
+are rendered. `Diagram::build` accepts an optional path (`None` means unnamed).
+Functions inside callable bodies are excluded, but entering a class/impl resets
+that scope so local-class methods remain visible.
+
+`callable_scope_patterns` marks anonymous callables and separate function bodies;
+`member_scope_patterns` excludes non-class member owners such as traits and object
+literals. Free functions must have a configured parameter container to distinguish
+them from globals. `namespace_header_patterns` extends namespace headers to following
+siblings. Omitted options add no boundaries.
+
 ### Variables & Fields
 
 Variable nodes are processed for their name and type. If the parser is currently within a class context, these are added as member variables (fields) to the UML class.
 
 ### Class header fields and getters
 
-class_field_rules extracts fields from configured direct children of class declarations. Rules can also generate public, same-name getters after explicit methods are collected, avoiding duplicate accessors. Java uses this for record components. See languages/java/config.yaml for an example.
+class_field_rules extracts fields from configured direct children of class declarations. Rules can also generate public, same-name getters after explicit methods are collected, avoiding duplicate accessors. Java uses this for record components, including varargs as arrays via `array_type_patterns`. See languages/java/config.yaml for an example.
 
 ### Visibility rendering
 

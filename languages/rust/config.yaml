@@ -53,3 +53,7 @@ class_type_parameter_patterns:
 type_path_separator: "::"
 self_parameter_patterns:
   - self_parameter
+callable_scope_patterns:
+  - closure_expression
+member_scope_patterns:
+  - trait_item

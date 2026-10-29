@@ -23,3 +23,5 @@ class Holder {
     public void method(int argument) {}
     record Nested(String name) {}
 }
+
+record Messages(String... messages) {}

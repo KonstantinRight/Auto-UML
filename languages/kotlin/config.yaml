@@ -11,6 +11,7 @@ function_patterns:
 variable_patterns:
   - property_declaration
 identifier_patterns:
+  - qualified_identifier
   - identifier
   - constructor
 type_patterns:
@@ -40,3 +41,9 @@ private_modifier_patterns:
   - private
   - protected
   - internal
+
+callable_scope_patterns:
+  - lambda_literal
+  - anonymous_function
+namespace_header_patterns:
+  - package_header

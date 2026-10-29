@@ -18,10 +18,16 @@ struct Edge {
 }
 
 fn escape_label(s: &str) -> String {
+    escape_record_text(s, true)
+}
+
+fn escape_record_text(s: &str, generics: bool) -> String {
     let mut escaped = String::new();
     let mut in_generic = false;
     for c in s.chars() {
         match c {
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
             '|' => escaped.push_str("\\|"),
             '{' => escaped.push_str("\\{"),
             '}' => escaped.push_str("\\}"),
@@ -29,7 +35,7 @@ fn escape_label(s: &str) -> String {
             '>' => escaped.push_str("\\>"),
             '\\' => escaped.push_str("\\\\"),
             '"' => escaped.push_str("\\\""),
-            '~' => {
+            '~' if generics => {
                 if in_generic {
                     escaped.push_str("\\>");
                     in_generic = false;
@@ -170,6 +176,29 @@ pub fn generate(uml_diagram: &diagram::Diagram) -> String {
         if has_namespace {
             output.push_str("    }\n");
         }
+    }
+
+    for (id, file) in uml_diagram.file_nodes() {
+        let mut functions = String::new();
+        for free in &file.functions {
+            functions.push_str(&format!("+{}\\l", escape_label(&free.render(lang))));
+            let result = &free.function.return_type;
+            for name in std::iter::once(&result.var_type).chain(result.inner_types.iter().flatten())
+            {
+                if uml_diagram.classes.iter().any(|c| c.name == *name) {
+                    edges.push(Edge {
+                        source: id.clone(),
+                        destination: name.clone(),
+                        edge_type: Relation::Dependency,
+                    });
+                }
+            }
+        }
+        // escape_label already quotes record syntax; do not escape its backslashes a second time.
+        output.push_str(&format!(
+            "    \"{id}\" [label=\"{{{}\\n\\<\\<file\\>\\>|{functions}}}\", shape=record];\n",
+            escape_record_text(&file.display_name(), false)
+        ));
     }
 
     output.push('\n');

@@ -31,3 +31,7 @@ classDiagram
         -name: String
         +name() String
     }
+    class Messages {
+        -messages: String[]
+        +messages() String[]
+    }

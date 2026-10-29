@@ -104,7 +104,7 @@ fn run_test(
     let source = std::fs::read(&path).expect("failed to read test file");
     let lang_config = LangConfig::load(&config.name);
     let mut diagram = Diagram::new(&lang_config);
-    diagram.build(&source, &mut parser);
+    diagram.build(&source, &mut parser, None);
 
     let uml_path = get_uml_for_category(config, category);
     let expected_uml = std::fs::read_to_string(&uml_path).expect("failed to read uml file");
@@ -244,6 +244,48 @@ mod java_records {
     }
 
     #[test]
+    fn varargs_record_components_are_arrays() {
+        let config = LangConfig::load("java");
+        for (component, expected_type, dot_type) in [
+            ("String... messages", "String[]", "String[]"),
+            ("int[]... messages", "int[][]", "int[][]"),
+            (
+                "java.util.List<String>... messages",
+                "java.util.List~String~[]",
+                r"java.util.List\\<String\\>[]",
+            ),
+        ] {
+            let mut diagram = Diagram::new(&config);
+            diagram.build(
+                format!("record Messages({component}) {{}}").as_bytes(),
+                &mut setup_parser("java"),
+                None,
+            );
+            let messages = &diagram.classes[0];
+            assert_eq!(
+                messages
+                    .variables
+                    .iter()
+                    .map(|field| field.render(&config))
+                    .collect::<Vec<_>>(),
+                [format!("-messages: {expected_type}")]
+            );
+            assert_eq!(
+                messages
+                    .functions
+                    .iter()
+                    .map(|function| function.render(&config))
+                    .collect::<Vec<_>>(),
+                [format!("messages() {expected_type}")]
+            );
+            assert!(generate(&diagram).contains(&format!("messages() {expected_type}")));
+            assert!(
+                auto_uml::graphviz::generate(&diagram).contains(&format!("messages() {dot_type}"))
+            );
+        }
+    }
+
+    #[test]
     fn optional_class_field_rules() {
         let enabled = LangConfig::load("java");
         let mut disabled = enabled.clone();
@@ -261,7 +303,7 @@ mod java_records {
             ("getter enabled", enabled, 1, 1),
         ] {
             let mut diagram = Diagram::new(&config);
-            diagram.build(b"record Item(int id) {}", &mut setup_parser("java"));
+            diagram.build(b"record Item(int id) {}", &mut setup_parser("java"), None);
             let item = diagram.classes.iter().find(|c| c.name == "Item").unwrap();
             assert_eq!(item.variables.len(), expected_fields, "{name}");
             assert_eq!(item.functions.len(), expected_getters, "{name}");
@@ -277,6 +319,7 @@ mod java_records {
         diagram.build(
             b"class Ordinary { void method(int argument) {} }",
             &mut setup_parser("java"),
+            None,
         );
         assert!(diagram.classes[0].variables.is_empty());
     }
@@ -287,7 +330,7 @@ mod java_records {
         let rule = config.class_field_rules.as_ref().unwrap()[0].clone();
         config.class_field_rules.as_mut().unwrap().push(rule);
         let mut diagram = Diagram::new(&config);
-        diagram.build(b"record Item(int id) {}", &mut setup_parser("java"));
+        diagram.build(b"record Item(int id) {}", &mut setup_parser("java"), None);
         let item = &diagram.classes[0];
         assert_eq!(item.variables.len(), 1);
         assert_eq!(item.functions.len(), 1);

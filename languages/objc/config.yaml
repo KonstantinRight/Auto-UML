@@ -51,8 +51,6 @@ skip_patterns:
   - ")"
   - "*"
   - long
-  - class_implementation
-  - implementation_definition
 import_patterns:
   - preproc_import
   - preproc_include
@@ -66,3 +64,9 @@ private_modifier_patterns:
   - private
   - "@private"
 suppress_self_relations: true
+
+callable_scope_patterns:
+  - block_literal
+member_scope_patterns:
+  - class_implementation
+  - implementation_definition

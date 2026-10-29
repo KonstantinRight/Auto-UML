@@ -8,7 +8,7 @@ class_patterns:
 class_field_rules:
   - owner_patterns: [record_declaration]
     container_patterns: [formal_parameters]
-    member_patterns: [formal_parameter]
+    member_patterns: [formal_parameter, spread_parameter]
     private: true
     getter:
       enabled: true
@@ -34,7 +34,10 @@ type_patterns:
 parameter_container_patterns:
   - parameters
   - formal_parameters
+array_type_patterns:
+  - spread_parameter
 parameter_patterns:
+  - spread_parameter
   - parameter
   - formal_parameter
 wrapper_patterns:
@@ -161,3 +164,6 @@ builtin_type_names:
   - Collections
   - Date
   - UUID
+
+callable_scope_patterns:
+  - lambda_expression

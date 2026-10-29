@@ -39,3 +39,9 @@ private_modifier_patterns:
 class_type_parameter_patterns:
   - type_parameters
 type_annotation_strip_prefix: ":"
+callable_scope_patterns:
+  - arrow_function
+  - function_expression
+  - generator_function
+member_scope_patterns:
+  - object

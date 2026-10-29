@@ -31,6 +31,18 @@ struct Edge {
     edge_type: Relation,
 }
 
+// Mermaid entity codes protect display text without changing node identifiers.
+fn escape_file_text(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '"' | '#' | '&' | '<' | '>' | '{' | '}' | '[' | ']' | '\n' | '\r' | '\\' => {
+                format!("#{};", c as u32)
+            }
+            _ => c.to_string(),
+        })
+        .collect()
+}
+
 pub fn generate(uml_diagram: &diagram::Diagram) -> String {
     let lang = uml_diagram.lang();
     let suppress_self_relations = lang.suppress_self_relations.unwrap_or(false);
@@ -70,7 +82,9 @@ pub fn generate(uml_diagram: &diagram::Diagram) -> String {
                 && var.inner_types.as_ref().is_none_or(|t| t.is_empty())
                 && var.var_type.starts_with(|c: char| c.is_uppercase())
                 && !is_self_ref(&var.var_type, class)
-                && !builtin_type_names.contains(&var.var_type)
+                && !builtin_type_names
+                    .iter()
+                    .any(|name| name == var.var_type.trim_end_matches("[]"))
                 && !class.type_params.contains(&var.var_type)
             {
                 let new_edge = Edge {
@@ -130,6 +144,31 @@ pub fn generate(uml_diagram: &diagram::Diagram) -> String {
         }
 
         output.push_str(&format!("{}}}\n", INDENT));
+    }
+
+    for (id, file) in uml_diagram.file_nodes() {
+        output.push_str(&format!(
+            "{INDENT}class {id}[\"{}\"] {{\n{INDENT}{INDENT}<<file>>\n",
+            escape_file_text(&file.display_name())
+        ));
+        for free in &file.functions {
+            output.push_str(&format!(
+                "{INDENT}{INDENT}+{}\n",
+                escape_file_text(&free.render(lang))
+            ));
+            let result = &free.function.return_type;
+            for name in std::iter::once(&result.var_type).chain(result.inner_types.iter().flatten())
+            {
+                if uml_diagram.classes.iter().any(|c| c.name == *name) {
+                    edges.push(Edge {
+                        source: id.clone(),
+                        destination: name.clone(),
+                        edge_type: Relation::Dependency,
+                    });
+                }
+            }
+        }
+        output.push_str(&format!("{INDENT}}}\n"));
     }
 
     // add edges to end of output

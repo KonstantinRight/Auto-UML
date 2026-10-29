@@ -1,4 +1,5 @@
 use crate::lang_config::{GetterNaming, GetterVisibility, LangConfig};
+use std::path::PathBuf;
 use tree_sitter::Node;
 
 const EMPTY_RETURN_TYPE: &str = "void";
@@ -27,7 +28,13 @@ impl Variable {
     pub fn display_type(&self) -> String {
         match &self.inner_types {
             Some(inner) if !inner.is_empty() => {
-                format!("{}~{}~", self.var_type, inner.join(", "))
+                let base = self.var_type.trim_end_matches("[]");
+                format!(
+                    "{}~{}~{}",
+                    base,
+                    inner.join(", "),
+                    &self.var_type[base.len()..]
+                )
             }
             _ => self.var_type.clone(),
         }
@@ -109,6 +116,38 @@ impl Function {
         }
     }
 }
+/// A named function outside a class and outside other callable bodies.
+pub struct FreeFunction {
+    pub namespace: String,
+    pub function: Function,
+}
+
+impl FreeFunction {
+    pub fn render(&self, lang: &LangConfig) -> String {
+        let signature = self.function.render(lang);
+        if self.namespace.is_empty() {
+            signature
+        } else {
+            format!("{}::{}", self.namespace, signature)
+        }
+    }
+}
+
+/// A source unit retained through directory merging. Only nonempty units are rendered.
+pub struct SourceFile {
+    pub path: Option<PathBuf>,
+    pub functions: Vec<FreeFunction>,
+}
+
+impl SourceFile {
+    pub fn display_name(&self) -> String {
+        self.path.as_ref().map_or_else(
+            || "(unnamed source)".to_string(),
+            |path| path.to_string_lossy().replace('\\', "/"),
+        )
+    }
+}
+
 pub struct Class {
     pub name: String,
     pub namespace: String,
@@ -174,6 +213,7 @@ fn any_type_match(patterns: &Option<Vec<String>>, kind: &str) -> bool {
 
 pub struct Diagram<'a> {
     pub classes: Vec<Class>,
+    pub files: Vec<SourceFile>,
     pub imports: Vec<String>,
     lang: &'a LangConfig,
 }
@@ -182,18 +222,55 @@ impl<'a> Diagram<'a> {
     pub fn new(lang: &'a LangConfig) -> Self {
         Diagram {
             classes: Vec::new(),
+            files: Vec::new(),
             imports: Vec::new(),
             lang,
         }
+    }
+
+    /// Stable file IDs in display-path order, avoiding every class ID and other file IDs.
+    pub(crate) fn file_nodes(&self) -> Vec<(String, &SourceFile)> {
+        let mut files: Vec<_> = self
+            .files
+            .iter()
+            .filter(|f| !f.functions.is_empty())
+            .collect();
+        files.sort_by_key(|f| f.display_name());
+        let mut used: std::collections::HashSet<_> =
+            self.classes.iter().map(|c| c.name.clone()).collect();
+        let mut next = 0;
+        files
+            .into_iter()
+            .map(|file| {
+                let id = loop {
+                    let id = format!("auto_uml_file_{next}");
+                    next += 1;
+                    if used.insert(id.clone()) {
+                        break id;
+                    }
+                };
+                (id, file)
+            })
+            .collect()
     }
 
     pub fn lang(&self) -> &LangConfig {
         self.lang
     }
 
-    pub fn build(&mut self, source: &[u8], parser: &mut tree_sitter::Parser) {
+    /// Build a source unit, using an unnamed source when `path` is absent.
+    pub fn build(
+        &mut self,
+        source: &[u8],
+        parser: &mut tree_sitter::Parser,
+        path: Option<PathBuf>,
+    ) {
         let tree = parser.parse(source, None).unwrap();
-        self.navigate_node(tree.root_node(), source, None, "");
+        self.files.push(SourceFile {
+            path,
+            functions: Vec::new(),
+        });
+        self.navigate_node(tree.root_node(), source, None, "", false);
     }
 
     /// Recursively navigate the tree_sitter tree and build out Diagram.
@@ -201,17 +278,19 @@ impl<'a> Diagram<'a> {
     /// Each node is offered to the composite parts below in order; only the first part whose
     /// config flag is present AND matches the node's kind runs. A part with no configured
     /// pattern (`None`) never fires, so a language config only needs to declare the parts it
-    /// actually uses.
+    /// actually uses. `inside_callable` excludes nested functions until a class/impl owner is entered.
     pub fn navigate_node(
         &mut self,
         node: Node,
         source: &[u8],
         class_index: Option<usize>,
         current_namespace: &str,
+        inside_callable: bool,
     ) {
         let mut next_class_index = class_index;
         let mut active_namespace = current_namespace.to_string();
         let mut getter_candidates = Vec::new();
+        let mut captured_function = false;
 
         let _ = self.try_import(node, source)
             || self.try_namespace(node, source, &mut active_namespace)
@@ -222,14 +301,35 @@ impl<'a> Diagram<'a> {
                 &mut next_class_index,
                 &mut getter_candidates,
             )
-            || self.try_function(node, source, next_class_index)
+            || (!inside_callable && {
+                captured_function =
+                    self.try_function(node, source, next_class_index, &active_namespace);
+                captured_function
+            })
             || self.try_variable(node, source, next_class_index);
 
         // Recursively travel all children nodes (break case is handled by empty for loop)
         let mut cursor = node.walk();
 
+        // A class/impl starts a new method scope, including inside a callable.
+        let inside_callable = inside_callable && !any_match(&self.lang.class_patterns, node.kind());
+        let child_callable = inside_callable
+            || captured_function
+            || any_match(&self.lang.callable_scope_patterns, node.kind())
+            || (next_class_index.is_none()
+                && any_match(&self.lang.member_scope_patterns, node.kind()));
         for child in node.children(&mut cursor) {
-            self.navigate_node(child, source, next_class_index, &active_namespace);
+            self.navigate_node(
+                child,
+                source,
+                next_class_index,
+                &active_namespace,
+                child_callable,
+            );
+            // Declaration-style headers apply to following siblings, not just their children.
+            if any_match(&self.lang.namespace_header_patterns, child.kind()) {
+                self.try_namespace(child, source, &mut active_namespace);
+            }
         }
         if let Some(idx) = next_class_index {
             self.add_missing_getters(idx, getter_candidates);
@@ -374,40 +474,57 @@ impl<'a> Diagram<'a> {
     }
 
     /// Gated on `function_patterns`.
-    fn try_function(&mut self, node: Node, source: &[u8], next_class_index: Option<usize>) -> bool {
+    fn try_function(
+        &mut self,
+        node: Node,
+        source: &[u8],
+        next_class_index: Option<usize>,
+        namespace: &str,
+    ) -> bool {
         let lang = self.lang;
         if !any_match(&lang.function_patterns, node.kind()) {
             return false;
         }
+        // Broad patterns such as C++ `declaration` also match globals. A free
+        // function must have a configured parameter container, even when empty.
+        if next_class_index.is_none() && !self.has_parameter_container(node) {
+            return false;
+        }
         let name = self.extract_identifier(node, source);
-        if !name.is_empty() {
-            let types = self.extract_type(node, source);
-            let return_type = if types.is_empty() || types[0] == EMPTY_RETURN_TYPE {
-                Variable::void()
+        if name.is_empty() {
+            return false;
+        }
+        let types = self.extract_type(node, source);
+        let return_type = if types.is_empty() || types[0] == EMPTY_RETURN_TYPE {
+            Variable::void()
+        } else {
+            let main_type = types[0].clone();
+            let inners = if types.len() > 1 {
+                Some(types[1..].to_vec())
             } else {
-                let main_type = types[0].clone();
-                let inners = if types.len() > 1 {
-                    Some(types[1..].to_vec())
-                } else {
-                    None
-                };
-                Variable {
-                    var_type: main_type,
-                    inner_types: inners,
-                    name: None,
-                    private: false,
-                }
+                None
             };
-            let mut func = Function::new(name, return_type);
-            func.is_constructor = any_match(&lang.constructor_patterns, node.kind());
-            self.extract_parameters(node, source, &mut func);
-
-            if let Some(idx) = next_class_index {
-                if self.lang.infer_param_types_from_fields.unwrap_or(false) {
-                    self.infer_param_types_from_fields(idx, &mut func);
-                }
-                self.classes[idx].add_function(func);
+            Variable {
+                var_type: main_type,
+                inner_types: inners,
+                name: None,
+                private: false,
             }
+        };
+        let mut func = Function::new(name, return_type);
+        func.is_constructor = any_match(&lang.constructor_patterns, node.kind());
+        self.extract_parameters(node, source, &mut func);
+
+        if let Some(idx) = next_class_index {
+            if self.lang.infer_param_types_from_fields.unwrap_or(false) {
+                self.infer_param_types_from_fields(idx, &mut func);
+            }
+            self.classes[idx].add_function(func);
+        } else if let Some(file) = self.files.last_mut() {
+            file.functions.push(FreeFunction {
+                namespace: namespace.to_string(),
+                function: func,
+            });
         }
         true
     }
@@ -517,6 +634,11 @@ impl<'a> Diagram<'a> {
 
     /// Helper to extract type information from a node.
     fn extract_type(&self, node: Node, source: &[u8]) -> Vec<String> {
+        let array_suffix = if any_match(&self.lang.array_type_patterns, node.kind()) {
+            "[]"
+        } else {
+            ""
+        };
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             let kind = child.kind();
@@ -555,7 +677,7 @@ impl<'a> Diagram<'a> {
                 // Naive parsing of generics: "Vec<User>" -> ["Vec", "User"]
                 if let Some(pos) = full_type.find('<') {
                     let raw_main = self.strip_type_suffixes(&full_type[..pos]);
-                    let main = self.strip_type_path(&raw_main);
+                    let main = format!("{}{array_suffix}", self.strip_type_path(&raw_main));
                     let mut inners = Vec::new();
                     if let Some(end_pos) = full_type.rfind('>') {
                         let inner_str = &full_type[pos + 1..end_pos];
@@ -571,7 +693,10 @@ impl<'a> Diagram<'a> {
                     result.append(&mut inners);
                     return result;
                 }
-                return vec![self.strip_type_path(&self.strip_type_suffixes(&full_type))];
+                return vec![format!(
+                    "{}{array_suffix}",
+                    self.strip_type_path(&self.strip_type_suffixes(&full_type))
+                )];
             }
 
             // Recurse into certain nodes that wrap types
@@ -682,6 +807,19 @@ impl<'a> Diagram<'a> {
             }
         }
         self.lang.private_by_default.unwrap_or(false)
+    }
+
+    /// Recognize a signature without interpreting variables as functions.
+    fn has_parameter_container(&self, node: Node) -> bool {
+        if any_match(&self.lang.parameter_container_patterns, node.kind()) {
+            return true;
+        }
+        let mut cursor = node.walk();
+        node.children(&mut cursor).any(|child| {
+            any_match(&self.lang.parameter_container_patterns, child.kind())
+                || (any_match(&self.lang.wrapper_patterns, child.kind())
+                    && self.has_parameter_container(child))
+        })
     }
 
     /// Helper to extract parameters and add them to a function.
@@ -847,7 +985,7 @@ mod tests {
         let rust_config = LangConfig::load("rust");
 
         let mut diagram = Diagram::new(&rust_config);
-        diagram.build(source, &mut parser);
+        diagram.build(source, &mut parser, None);
 
         // Find the class or function we just built
         // In this case it's a top level function, so it might not be in a class

@@ -47,3 +47,5 @@ public_modifier_patterns:
   - public
 private_modifier_patterns:
   - private
+callable_scope_patterns:
+  - lambda_expression

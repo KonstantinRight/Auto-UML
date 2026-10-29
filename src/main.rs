@@ -217,7 +217,11 @@ fn main() {
         // Single file mode
         let source = std::fs::read(&input_path).expect("Failed to read source code file");
         let mut program_diagram = Diagram::new(&config);
-        program_diagram.build(&source, &mut parser);
+        program_diagram.build(
+            &source,
+            &mut parser,
+            input_path.file_name().map(std::path::PathBuf::from),
+        );
         program_diagram
     };
 

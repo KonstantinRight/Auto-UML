@@ -45,3 +45,6 @@ private_modifier_patterns:
   - internal
 class_type_parameter_patterns:
   - type_parameter_list
+callable_scope_patterns:
+  - lambda_expression
+  - anonymous_method_expression

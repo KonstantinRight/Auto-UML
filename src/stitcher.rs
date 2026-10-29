@@ -30,18 +30,26 @@ impl<'a> Directory<'a> {
         // First, merge subdirectories recursively
         for sub_dir in &mut self.sub_directories {
             sub_dir.merge_all();
-            let mut classes = sub_dir.merged_diagram.classes.drain(..).collect();
-            self.merged_diagram.classes.append(&mut classes);
-            let mut imports = sub_dir.merged_diagram.imports.drain(..).collect();
-            self.merged_diagram.imports.append(&mut imports);
+            self.merged_diagram
+                .classes
+                .append(&mut sub_dir.merged_diagram.classes);
+            self.merged_diagram
+                .files
+                .append(&mut sub_dir.merged_diagram.files);
+            self.merged_diagram
+                .imports
+                .append(&mut sub_dir.merged_diagram.imports);
         }
 
         // Then merge files in current directory
         for file in &mut self.files {
-            let mut classes = file.diagram.classes.drain(..).collect();
-            self.merged_diagram.classes.append(&mut classes);
-            let mut imports = file.diagram.imports.drain(..).collect();
-            self.merged_diagram.imports.append(&mut imports);
+            self.merged_diagram
+                .classes
+                .append(&mut file.diagram.classes);
+            self.merged_diagram.files.append(&mut file.diagram.files);
+            self.merged_diagram
+                .imports
+                .append(&mut file.diagram.imports);
         }
     }
 
@@ -96,6 +104,37 @@ impl<'a> Directory<'a> {
                         for inner in inners {
                             if let Some(qualified) =
                                 type_map.resolve(inner, &class.name, &self.merged_diagram.imports)
+                            {
+                                *inner = qualified;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for file in &mut self.merged_diagram.files {
+            let path_prefix = file
+                .path
+                .as_ref()
+                .and_then(|p| p.parent())
+                .map(|p| p.to_string_lossy().replace(['/', '\\', '.'], "_"))
+                .unwrap_or_default();
+            for free in &mut file.functions {
+                let context = format!("{}_{}_", free.namespace, path_prefix)
+                    .trim_start_matches('_')
+                    .to_string();
+                for var in std::iter::once(&mut free.function.return_type)
+                    .chain(&mut free.function.arguments)
+                {
+                    if let Some(qualified) =
+                        type_map.resolve(&var.var_type, &context, &self.merged_diagram.imports)
+                    {
+                        var.var_type = qualified;
+                    }
+                    if let Some(inners) = &mut var.inner_types {
+                        for inner in inners {
+                            if let Some(qualified) =
+                                type_map.resolve(inner, &context, &self.merged_diagram.imports)
                             {
                                 *inner = qualified;
                             }
@@ -259,12 +298,12 @@ impl<'a> Stitcher<'a> {
         let source = fs::read(path).ok()?;
 
         let mut diagram = Diagram::new(self.config);
-        diagram.build(&source, &mut self.parser);
-
         let relative_path = path
             .strip_prefix(&self.root_path)
             .unwrap_or(path)
             .to_path_buf();
+
+        diagram.build(&source, &mut self.parser, Some(relative_path.clone()));
 
         // Qualify class names based on path to prevent collisions
         let path_prefix = relative_path

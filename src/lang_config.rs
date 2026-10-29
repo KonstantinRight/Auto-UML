@@ -18,9 +18,18 @@ pub struct LangConfig {
     /// Missing/empty rules leave ordinary field extraction unchanged.
     pub class_field_rules: Option<Vec<ClassFieldRule>>,
     pub function_patterns: Option<Vec<String>>,
+    /// Anonymous callable node kinds; functions below these nodes are never free functions.
+    pub callable_scope_patterns: Option<Vec<String>>,
+    /// Member-only owners not represented as classes (e.g. traits or object literals).
+    /// Suppress free-function capture in these subtrees when no class owner exists.
+    pub member_scope_patterns: Option<Vec<String>>,
+    /// Namespace patterns whose names also apply to following siblings (e.g. package headers).
+    pub namespace_header_patterns: Option<Vec<String>>,
     pub variable_patterns: Option<Vec<String>>,
     pub identifier_patterns: Option<Vec<String>>,
     pub type_patterns: Option<Vec<String>>,
+    /// Nodes whose extracted type gains an array dimension, such as Java varargs.
+    pub array_type_patterns: Option<Vec<String>>,
     pub parameter_container_patterns: Option<Vec<String>>,
     pub parameter_patterns: Option<Vec<String>>,
     pub wrapper_patterns: Option<Vec<String>>,
