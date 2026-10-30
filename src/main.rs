@@ -1,5 +1,6 @@
 mod diagram;
 mod graphviz;
+mod input_selection;
 mod lang_config;
 mod mermaid;
 mod stitcher;
@@ -7,6 +8,7 @@ use crate::diagram::Diagram;
 use crate::lang_config::LangConfig;
 use clap::{ArgGroup, Parser};
 use std::fs;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tree_sitter::Parser as TreeSitterParser;
 
@@ -27,9 +29,9 @@ struct Args {
     /// Programming language (optional, auto-detected if omitted)
     #[arg(short, long)]
     lang: Option<String>,
-    /// Path to the local source file or directory
-    #[arg(short, long, conflicts_with = "git", default_value("."))]
-    source_code: String,
+    /// Local source files or directories (space-separated or repeated; defaults to .)
+    #[arg(short, long, conflicts_with = "git", num_args = 1.., action = clap::ArgAction::Append)]
+    source_code: Vec<PathBuf>,
     /// Remote git repository URL to clone and analyze
     #[arg(long, conflicts_with = "source_code")]
     git: Option<String>,
@@ -142,7 +144,7 @@ fn get_parser(lang: &str) -> TreeSitterParser {
     parser
 }
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let args = Args::parse();
 
     // list languages and exit early
@@ -151,7 +153,7 @@ fn main() {
         for lang in LangConfig::list_languages() {
             println!(" - {}", lang);
         }
-        return;
+        return Ok(());
     }
 
     // Handle the optional remote git directory
@@ -188,26 +190,50 @@ fn main() {
     } else {
         // handle simple local code path
         temp_dir = None;
-        std::path::PathBuf::from(args.source_code)
+        args.source_code
+            .first()
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from("."))
+    };
+
+    let selection = if args.source_code.len() > 1 {
+        Some(input_selection::InputSelection::collect(
+            &args.source_code,
+            args.no_ignore,
+        )?)
+    } else {
+        None
     };
 
     // define language or if flag not set attempt to detect language
-    let lang = args
-        .lang
-        .clone()
-        .or_else(|| {
-            detect_language(&input_path).map(|l| {
-                println!("Auto-detected language: {}", l);
-                l
+    let lang = if let Some(selection) = &selection {
+        match &args.lang {
+            Some(lang) => lang.clone(),
+            None => selection.detect_language()?,
+        }
+    } else {
+        args.lang
+            .clone()
+            .or_else(|| {
+                detect_language(&input_path).map(|l| {
+                    println!("Auto-detected language: {}", l);
+                    l
+                })
             })
-        })
-        .expect("Could not determine language. Please specify with --lang");
+            .expect("Could not determine language. Please specify with --lang")
+    };
 
     let config: LangConfig = LangConfig::load(&lang);
     let mut parser = get_parser(&lang);
 
     // create diagram
-    let final_diagram = if input_path.is_dir() {
+    let final_diagram = if let Some(selection) = &selection {
+        let mut stitcher = stitcher::Stitcher::new(input_path, &config, parser, args.no_ignore);
+        let mut directory = stitcher.build_selected(selection)?;
+        directory.merge_all();
+        directory.resolve_types(&stitcher.type_map);
+        directory.merged_diagram
+    } else if input_path.is_dir() {
         let mut stitcher = stitcher::Stitcher::new(input_path, &config, parser, args.no_ignore);
         let mut directory = stitcher.build();
         directory.merge_all();
@@ -257,4 +283,5 @@ fn main() {
         println!("Cleaning up temporary directory...");
         std::fs::remove_dir_all(&temp_path).ok();
     }
+    Ok(())
 }

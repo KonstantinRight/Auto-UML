@@ -113,16 +113,19 @@ impl<'a> Directory<'a> {
             }
         }
         for file in &mut self.merged_diagram.files {
-            let path_prefix = file
-                .path
-                .as_ref()
-                .and_then(|p| p.parent())
-                .map(|p| p.to_string_lossy().replace(['/', '\\', '.'], "_"))
-                .unwrap_or_default();
+            let path_prefix = file.path.as_ref().map_or_else(String::new, |path| {
+                type_map
+                    .path_prefixes
+                    .get(path)
+                    .cloned()
+                    .unwrap_or_else(|| path_prefix(path, false))
+            });
             for free in &mut file.functions {
-                let context = format!("{}_{}_", free.namespace, path_prefix)
-                    .trim_start_matches('_')
-                    .to_string();
+                let context = if free.namespace.is_empty() {
+                    format!("{path_prefix}_")
+                } else {
+                    format!("{}_{path_prefix}_", free.namespace)
+                };
                 for var in std::iter::once(&mut free.function.return_type)
                     .chain(&mut free.function.arguments)
                 {
@@ -150,6 +153,8 @@ impl<'a> Directory<'a> {
 pub struct GlobalTypeMap {
     /// Maps short class name to a list of fully qualified names (namespaced)
     pub types: HashMap<String, Vec<String>>,
+    // Selected-file prefixes are also the contexts used for free functions.
+    path_prefixes: HashMap<PathBuf, String>,
 }
 
 impl GlobalTypeMap {
@@ -234,6 +239,40 @@ impl<'a> Stitcher<'a> {
         root_dir
     }
 
+    /// Parse only selected files, accumulating one shared type map. The caller
+    /// merges and resolves once after all files have been parsed.
+    pub fn build_selected(
+        &mut self,
+        selection: &crate::input_selection::InputSelection,
+    ) -> std::io::Result<Directory<'a>> {
+        let mut directory = Directory::new(self.config);
+        self.type_map = GlobalTypeMap::default();
+        for file in &selection.files {
+            if !file.explicit && !crate::input_selection::matches_language(&file.path, self.config)
+            {
+                continue;
+            }
+            let source = fs::read(&file.path).map_err(|error| {
+                std::io::Error::other(format!("{}: {error}", file.path.display()))
+            })?;
+            let relative_path = selection
+                .naming_base
+                .as_ref()
+                .and_then(|base| file.path.strip_prefix(base).ok())
+                .unwrap_or(&file.path)
+                .to_path_buf();
+            directory
+                .files
+                .push(self.parse_file(&source, relative_path, true));
+        }
+        if directory.files.is_empty() {
+            return Err(std::io::Error::other(
+                "No eligible source files in the selection",
+            ));
+        }
+        Ok(directory)
+    }
+
     /// Walk `root_path` with the `ignore` crate and collect every path it yields.
     ///
     /// Respects `.gitignore`, `.ignore`, git global/exclude files and skips hidden
@@ -296,24 +335,30 @@ impl<'a> Stitcher<'a> {
 
     fn process_file(&mut self, path: &Path) -> Option<File<'a>> {
         let source = fs::read(path).ok()?;
-
-        let mut diagram = Diagram::new(self.config);
         let relative_path = path
             .strip_prefix(&self.root_path)
             .unwrap_or(path)
             .to_path_buf();
 
-        diagram.build(&source, &mut self.parser, Some(relative_path.clone()));
+        Some(self.parse_file(&source, relative_path, false))
+    }
 
-        // Qualify class names based on path to prevent collisions
-        let path_prefix = relative_path
-            .parent()
-            .map(|p| {
-                p.to_string_lossy()
-                    .to_string()
-                    .replace(['/', '\\', '.'], "_")
-            })
-            .unwrap_or_default();
+    fn parse_file(
+        &mut self,
+        source: &[u8],
+        relative_path: PathBuf,
+        sanitize_path: bool,
+    ) -> File<'a> {
+        let mut diagram = Diagram::new(self.config);
+
+        diagram.build(source, &mut self.parser, Some(relative_path.clone()));
+
+        let path_prefix = path_prefix(&relative_path, sanitize_path);
+        if sanitize_path {
+            self.type_map
+                .path_prefixes
+                .insert(relative_path, path_prefix.clone());
+        }
 
         for class in &mut diagram.classes {
             let original_name = class.name.clone();
@@ -328,8 +373,32 @@ impl<'a> Stitcher<'a> {
             self.type_map.insert(original_name, class.name.clone());
         }
 
-        Some(File { diagram })
+        File { diagram }
     }
+}
+
+/// Keep legacy directory labels; selected paths use reversible character escapes.
+/// Escape underscores too, so literal escape text cannot alias encoded punctuation.
+/// Escape separators as well, so nested paths cannot alias an escape sequence.
+fn path_prefix(path: &Path, selected: bool) -> String {
+    let Some(parent) = path.parent() else {
+        return String::new();
+    };
+    let text = parent.to_string_lossy();
+    if !selected {
+        return text.replace(['/', '\\', '.'], "_");
+    }
+    let text = if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.into_owned()
+    };
+    text.chars()
+        .map(|c| match c {
+            c if c.is_ascii_alphanumeric() => c.to_string(),
+            c => format!("_x{:x}_", c as u32),
+        })
+        .collect()
 }
 
 #[cfg(test)]

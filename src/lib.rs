@@ -43,6 +43,10 @@
 //! # Directory mode (entire repository)
 //! auto-uml --source-code path/to/project
 //!
+//! # Combine selected files and directories into one diagram
+//! auto-uml --source-code src/models src/service.rs tests/example.rs
+//! auto-uml -s src/models -s src/service.rs
+//!
 //! # Remote git repository
 //! auto-uml --git https://github.com/user/repo.git
 //!
@@ -65,7 +69,7 @@
 //! | ------ | ------------- |
 //! | `--list-languages` | List available programming languages, then exit |
 //! | `-l`, `--lang <LANG>` | Programming language (optional, auto-detected if omitted) |
-//! | `-s`, `--source-code <PATH>` | Path to the local source file or directory [default: current directory]. Mutually exclusive with `--git` |
+//! | `-s`, `--source-code <PATH>...` | Local source files or directories; accepts repeated flags [default: current directory]. Mutually exclusive with `--git` |
 //! | `--git <URL>` | Remote git repository URL to clone and analyze |
 //! | `-f`, `--format <FORMAT>` | Output format, `mermaid` or `graphviz` [default: mermaid] |
 //! | `--code-block` | Wraps the output in a markdown code block. Off by default |
@@ -109,6 +113,25 @@
 //!
 //! Files excluded by `.gitignore`, `.ignore`, and other standard ignore files are skipped in
 //! directory mode. Pass `--no-ignore` to include them.
+//!
+//! ### Multiple inputs
+//!
+//! Pass space-separated paths or repeat `-s` / `--source-code`. Quote paths containing
+//! spaces; commas are treated as part of a path. Files and directories can be mixed.
+//! Overlapping directories and repeated files are parsed once. Only selected files and
+//! directory contents contribute to the diagram; imports do not add other files.
+//!
+//! Multiple inputs use one language and produce one diagram with type resolution across
+//! the selection. Mixed languages or ambiguous extensions (such as `.h`) require
+//! `--lang`. An explicit language filters directory contents; explicitly named files
+//! always use that parser, including files excluded by ignore rules. Invalid paths,
+//! traversal or read errors, and selections with no eligible files fail before output
+//! is written. With no local input or `--git`, the source defaults to `.`.
+//!
+//! For multiple roots, labels use paths relative to their common ancestor. The ancestor
+//! is used only for naming. Paths on different Windows drives retain their drive
+//! qualification. Punctuation in selected path identifiers is escaped to keep distinct
+//! paths distinct; source-file display labels retain the original paths.
 //!
 //! ## How It Works
 //!
@@ -197,6 +220,7 @@
 
 pub mod diagram;
 pub mod graphviz;
+pub mod input_selection;
 pub mod lang_config;
 pub mod mermaid;
 pub mod stitcher;

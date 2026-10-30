@@ -9,7 +9,7 @@ Produce a reviewable implementation proposal grounded in existing code. A planni
 
 ## Capture the current state
 
-Before designing the target structure, read [references/auto-uml.md](references/auto-uml.md) and run Auto-UML on the relevant files or directories. Write to explicit destinations in a task artifact or temporary directory. Retain the exact generated baseline and record the analyzed paths, command, and available version information.
+Before designing the target structure, read [references/auto-uml.md](references/auto-uml.md) and run Auto-UML on the relevant files or directories. Combine relevant selections with multi-input `--source-code`. Write to explicit destinations in a task artifact or temporary directory. Retain the exact generated baseline and record the analyzed paths, command, and available version information.
 
 Extraction is not a guarantee of completeness. Identify unresolved types and omitted relationships; never silently add inferred edges to a diagram labelled raw Auto-UML output. If readability requires filtering or corrections, label the displayed diagram as adapted and link the retained raw artifact. Use separate diagrams for disjoint scopes rather than concatenating Mermaid documents.
 
